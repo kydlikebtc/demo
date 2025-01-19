@@ -5,6 +5,7 @@ import { RetryHandler, ProcessTimeouts } from '../utils/timeouts.js';
 import { AnalyticsTracker } from '../models/analytics.js';
 import { AgentMessage, MessageTypes } from '../models/agentMessage.js';
 import { signMessage, verifyMessage } from '../utils/security.js';
+import { uploadContentToIPFS, getContentFromIPFS } from '../services/ipfsStorage.js';
 
 export class CPA {
   constructor() {
@@ -15,6 +16,7 @@ export class CPA {
     this.contentCache = new Map(); // Store generated content
     this.opa = opa; // Reference to OPA for state updates
     this.analytics = new AnalyticsTracker(); // Analytics tracking
+    this.ipfsHashes = new Map(); // Store IPFS content hashes
   }
 
   async generateContent(order) {
@@ -102,11 +104,15 @@ export class CPA {
     }
 
     try {
+      // Store content in IPFS
+      const contentHash = await uploadContentToIPFS(content);
+      this.ipfsHashes.set(order.id, contentHash);
+      
       // Mock Twitter API publishing
       const publishResult = await this._mockPublishToTwitter(content);
       
-      // Record analytics
-      await this.analytics.recordPublish(order, publishResult.tweetId);
+      // Record analytics with IPFS hash
+      await this.analytics.recordPublish(order, publishResult.tweetId, contentHash);
       
       // Move to COMPLETED state after successful publishing
       await this.opa.updateStatus(order.id, OrderStates.COMPLETED);

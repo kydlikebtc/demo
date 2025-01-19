@@ -8,14 +8,19 @@ export class AnalyticsTracker {
     this.weeklyReports = new Map();
   }
 
-  async recordPublish(order, tweetId) {
+  async recordPublish(order, tweetId, contentHash) {
     if (!order?.id || !tweetId) {
       throw new TaapError('E001', 'Invalid order or tweet ID for analytics');
+    }
+    
+    if (!contentHash) {
+      throw new TaapError('E001', 'Content hash is required for analytics');
     }
 
     const stats = {
       orderId: order.id,
       tweetId,
+      contentHash,
       serviceType: order.serviceCode,
       timestamp: new Date(),
       metrics: {

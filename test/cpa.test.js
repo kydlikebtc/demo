@@ -65,5 +65,30 @@ describe('CPA Tests', () => {
       const updatedOrder = opa.getOrder(order.id);
       expect(updatedOrder.state).toBe(OrderStates.COMPLETED);
     });
+
+    it('stores content in IPFS before publishing', async () => {
+      await cpa.generateContent(order);
+      await cpa.reviewContent(order);
+      await cpa.publishContent(order);
+      
+      const contentHash = cpa.ipfsHashes.get(order.id);
+      expect(contentHash).toBeDefined();
+      expect(typeof contentHash).toBe('string');
+      expect(contentHash.length).toBe(46); // Standard IPFS CID length
+    });
+
+    it('includes IPFS hash in analytics', async () => {
+      const analyticsSpy = jest.spyOn(cpa.analytics, 'recordPublish');
+      
+      await cpa.generateContent(order);
+      await cpa.reviewContent(order);
+      await cpa.publishContent(order);
+      
+      expect(analyticsSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        expect.stringMatching(/^[A-Za-z0-9+/]{46}$/) // Base64 CID format
+      );
+    });
   });
 });
