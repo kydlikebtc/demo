@@ -1,17 +1,16 @@
+import { IPaymentProvider } from '../models/paymentProvider.js';
 import { ServiceTypes } from '../models/serviceTypes.js';
 
-// Mock Ethereum smart contract implementation
-export class AdsPaymentContract {
+export class EthereumPaymentProvider extends IPaymentProvider {
   constructor() {
+    super();
     this.balances = new Map();
     this.payments = new Map();
     this.confirmations = new Map();
   }
 
-  // Implementation of IAdsPayment.verifyPayment
   async verifyPayment(userAddress, serviceCode) {
-    // Validate inputs
-    if (!this._isValidAddress(userAddress)) {
+    if (!this.validateAddress(userAddress)) {
       throw new Error('Invalid Ethereum address');
     }
     
@@ -19,19 +18,15 @@ export class AdsPaymentContract {
       throw new Error('Invalid service code');
     }
 
-    // Get service price
-    const price = this.getServicePrice(serviceCode);
-    
-    // Check user balance
+    const price = await this.getServicePrice(serviceCode);
     const balance = this.balances.get(userAddress) || 0;
+    
     if (balance < price) {
       return false;
     }
 
-    // Mock transaction confirmation (minimum 3 blocks)
     await this._mockBlockConfirmations();
 
-    // Lock payment amount
     this.balances.set(userAddress, balance - price);
     this.payments.set(userAddress + '_' + serviceCode, {
       amount: price,
@@ -42,8 +37,7 @@ export class AdsPaymentContract {
     return true;
   }
 
-  // Implementation of IAdsPayment.getServicePrice
-  getServicePrice(serviceCode) {
+  async getServicePrice(serviceCode) {
     const service = ServiceTypes[serviceCode];
     if (!service) {
       throw new Error('Invalid service code');
@@ -51,8 +45,11 @@ export class AdsPaymentContract {
     return service.price;
   }
 
-  // Implementation of IAdsPayment.refund
   async refund(userAddress, orderId) {
+    if (!this.validateAddress(userAddress)) {
+      throw new Error('Invalid Ethereum address');
+    }
+
     const paymentKey = userAddress + '_' + orderId;
     const payment = this.payments.get(paymentKey);
     
@@ -64,19 +61,26 @@ export class AdsPaymentContract {
       throw new Error('Payment not confirmed');
     }
 
-    // Return funds to user balance
     const currentBalance = this.balances.get(userAddress) || 0;
     this.balances.set(userAddress, currentBalance + payment.amount);
-    
-    // Clear payment record
     this.payments.delete(paymentKey);
 
     return true;
   }
 
-  // Mock methods for testing
+  validateAddress(address) {
+    return typeof address === 'string' && 
+           address.startsWith('0x') && 
+           address.length === 42 &&
+           /^0x[0-9a-fA-F]{40}$/.test(address);
+  }
+
+  getChainId() {
+    return 'ethereum';
+  }
+
   async mockDeposit(address, amount) {
-    if (!this._isValidAddress(address)) {
+    if (!this.validateAddress(address)) {
       throw new Error('Invalid address');
     }
     const current = this.balances.get(address) || 0;
@@ -84,21 +88,11 @@ export class AdsPaymentContract {
     return true;
   }
 
-  // Private helper methods
-  _isValidAddress(address) {
-    return typeof address === 'string' && 
-           address.startsWith('0x') && 
-           address.length === 42 &&
-           /^0x[0-9a-fA-F]{40}$/.test(address);
-  }
-
   async _mockBlockConfirmations() {
-    // Simulate waiting for 3 block confirmations
     await new Promise(resolve => setTimeout(resolve, 100));
     return true;
   }
 
-  // For testing: get current balance
   getBalance(address) {
     return this.balances.get(address) || 0;
   }

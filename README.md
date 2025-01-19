@@ -1,6 +1,6 @@
 # TAAP Protocol Implementation
 
-This repository implements the TAAP (Dual-Agent Advertisement Protocol) for automated advertisement services on Twitter. The implementation includes both Order Processing Agent (OPA) and Content Publishing Agent (CPA) with mocked integrations for Twitter API and Ethereum smart contracts.
+This repository implements the TAAP (Dual-Agent Advertisement Protocol) for automated advertisement services on Twitter. The implementation includes both Order Processing Agent (OPA) and Content Publishing Agent (CPA) with mocked integrations for Twitter API and multi-chain smart contract support.
 
 ## Core Features
 
@@ -8,19 +8,67 @@ This repository implements the TAAP (Dual-Agent Advertisement Protocol) for auto
   - Ethereum and Solana integration
   - Chain-specific address validation
   - Automatic price conversion
+  - Payment verification and refunds
 - Analytics and Reporting
   - Real-time engagement tracking (#ADS_{orderId}_stats)
   - Hourly/daily/weekly reports
   - Performance trend analysis
+  - Demographic insights
 - Security Features
   - Inter-agent message signing
   - Rate limiting per address
   - Exponential backoff retry
+  - Chain-specific validation
 - Content Management
   - IPFS-based storage
   - Partial completion support
   - Progress tracking
-- Error Handling
+  - AI-powered generation
+- Twitter API Integration (mocked)
+  - Tweet posting and scheduling
+  - Engagement tracking
+  - Rate limit handling
+  - Thread optimization
+
+## Multi-Chain Compatibility
+
+### Chain Selection
+Specify the blockchain network using hashtags in your order tweet:
+- Ethereum (default): `#eth`
+- Solana: `#solana`
+
+Example tweets:
+```
+#aiads 0x742d35Cc6634C0532925a3b844Bc454e4438f44e S1 Create promotional content #adtech #promotion #eth
+#aiads 7RCz8wb6WXxUhAigZXF4kNxNgAKTi9sF5Z4FxXYq7czM S2 Launch campaign #adtech #promotion #solana
+```
+
+### Address Format Requirements
+- Ethereum addresses:
+  - Start with '0x'
+  - 42 characters long (including '0x')
+  - Hexadecimal format (0-9, a-f, A-F)
+- Solana addresses:
+  - 32-44 characters long
+  - Base58 format (A-Z, a-z, 0-9, excluding 0, O, I, l)
+
+### Chain-Specific Characteristics
+- Ethereum:
+  - Confirmation time: ~15 seconds (mocked)
+  - Standard gas fees apply
+  - Full EVM compatibility
+- Solana:
+  - Confirmation time: ~1 second (mocked)
+  - Lower transaction fees
+  - High throughput support
+
+## State Management
+- 8-state machine implementation
+- Clear transition rules
+- Error recovery procedures
+- Partial completion support
+
+## Error Handling
   - Standardized error codes
   - Automatic retries with backoff
   - Recovery procedures

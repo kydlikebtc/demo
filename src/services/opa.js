@@ -4,10 +4,15 @@ import { validateServiceCode, getServicePrice } from '../models/serviceTypes.js'
 import { RetryHandler, ProcessTimeouts } from '../utils/timeouts.js';
 import { AgentMessage, MessageTypes } from '../models/agentMessage.js';
 import { signMessage, rateLimiter } from '../utils/security.js';
+import { EthereumPaymentProvider } from '../mocks/ethereumPaymentProvider.js';
+import { SolanaPaymentProvider } from '../mocks/solanaPaymentProvider.js';
 
 export class OPA {
   constructor() {
     this.orders = new Map(); // In-memory store for orders
+    this.ethereumProvider = new EthereumPaymentProvider();
+    this.solanaProvider = new SolanaPaymentProvider();
+    this.messageQueue = new Map(); // Store signed messages
   }
 
   // Helper method to extract user address from tweet
@@ -19,20 +24,26 @@ export class OPA {
   parseOrderCommand(tweetData) {
     // Check rate limit for the user's address
     const userAddress = this._extractUserAddress(tweetData);
-    if (rateLimiter.isRateLimited(userAddress)) {
+    if (userAddress && rateLimiter.isRateLimited(userAddress)) {
       throw new TaapError('E005', 'Rate limit exceeded for this address');
     }
     rateLimiter.addRequest(userAddress);
 
-    // Parse tweet format: #aiads {contract_address} {service_code} {requirement}
-    const regex = /^#aiads\s+(0x[a-fA-F0-9]{40})\s+(S[1-3])\s+(.+?)(?:\s+#adtech\s+#promotion)?$/;
+    // Parse tweet format: #aiads {contract_address} {service_code} {requirement} [#eth|#solana]
+    const regex = /^#aiads\s+([A-Za-z0-9]{32,44})\s+(S[1-3])\s+(.+?)(?:\s+#adtech\s+#promotion)?(?:\s+#(eth|solana))?$/;
     const match = tweetData.trim().match(regex);
 
     if (!match) {
       throw new TaapError('E001', 'Tweet format does not match required pattern');
     }
 
-    const [, contractAddress, serviceCode, requirement] = match;
+    const [, contractAddress, serviceCode, requirement, chain = 'eth'] = match;
+    
+    // Validate address format based on chain
+    const provider = chain === 'solana' ? this.solanaProvider : this.ethereumProvider;
+    if (!provider.validateAddress(contractAddress)) {
+      throw new TaapError('E001', `Invalid ${chain} address format`);
+    }
 
     // Validate service code
     if (!validateServiceCode(serviceCode)) {
@@ -50,6 +61,7 @@ export class OPA {
       contractAddress,
       serviceCode,
       requirement,
+      chain,
       state: OrderStates.RECEIVED,
       price: getServicePrice(serviceCode),
       createdAt: new Date(),
@@ -70,6 +82,7 @@ export class OPA {
     }
 
     const retryHandler = new RetryHandler('PAYMENT_VERIFICATION', ProcessTimeouts.PAYMENT_VERIFICATION.retries);
+    const provider = order.chain === 'solana' ? this.solanaProvider : this.ethereumProvider;
 
     try {
       const result = await retryHandler.execute(async () => {
@@ -77,13 +90,15 @@ export class OPA {
           throw new TaapError('E002', 'Payment verification timed out');
         }
 
-        // Mock payment verification - in real implementation, this would call the smart contract
-        const verified = true; // Mocked to always succeed as per plan
+        // Verify payment using chain-specific provider
+        const verified = await provider.verifyPayment(
+          order.contractAddress,
+          order.serviceCode
+        );
         
         if (!verified) {
           throw new TaapError('E002', 'Payment verification failed');
         }
-
         await this.updateStatus(orderId, OrderStates.PAYMENT_VERIFIED);
         return true;
       });
@@ -93,7 +108,7 @@ export class OPA {
       if (error instanceof TaapError) {
         throw error;
       }
-      throw new TaapError('E002', `Payment verification error: ${error.message}`);
+      throw new TaapError('E002', error.message || 'Payment verification error');
     }
   }
 
