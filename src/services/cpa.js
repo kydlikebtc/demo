@@ -3,6 +3,8 @@ import { TaapError } from '../models/errors.js';
 import { ServiceTypes } from '../models/serviceTypes.js';
 import { RetryHandler, ProcessTimeouts } from '../utils/timeouts.js';
 import { AnalyticsTracker } from '../models/analytics.js';
+import { AgentMessage, MessageTypes } from '../models/agentMessage.js';
+import { signMessage, verifyMessage } from '../utils/security.js';
 
 export class CPA {
   constructor() {
@@ -18,6 +20,16 @@ export class CPA {
   async generateContent(order) {
     if (!order || !order.id) {
       throw new TaapError('E001', 'Invalid order object');
+    }
+
+    // Verify the order message signature
+    const message = new AgentMessage(
+      MessageTypes.NEW_ORDER,
+      order.id,
+      { status: order.state }
+    );
+    if (!verifyMessage('OPA', message)) {
+      throw new TaapError('E001', 'Invalid order signature');
     }
 
     const retryHandler = new RetryHandler('CONTENT_GENERATION', ProcessTimeouts.CONTENT_GENERATION.retries);

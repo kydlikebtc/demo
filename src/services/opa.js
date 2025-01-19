@@ -2,13 +2,28 @@ import { OrderStates, isValidTransition } from '../models/orderState.js';
 import { TaapError } from '../models/errors.js';
 import { validateServiceCode, getServicePrice } from '../models/serviceTypes.js';
 import { RetryHandler, ProcessTimeouts } from '../utils/timeouts.js';
+import { AgentMessage, MessageTypes } from '../models/agentMessage.js';
+import { signMessage, rateLimiter } from '../utils/security.js';
 
 export class OPA {
   constructor() {
     this.orders = new Map(); // In-memory store for orders
   }
 
+  // Helper method to extract user address from tweet
+  _extractUserAddress(tweetData) {
+    const match = tweetData.match(/0x[a-fA-F0-9]{40}/);
+    return match ? match[0] : null;
+  }
+
   parseOrderCommand(tweetData) {
+    // Check rate limit for the user's address
+    const userAddress = this._extractUserAddress(tweetData);
+    if (rateLimiter.isRateLimited(userAddress)) {
+      throw new TaapError('E005', 'Rate limit exceeded for this address');
+    }
+    rateLimiter.addRequest(userAddress);
+
     // Parse tweet format: #aiads {contract_address} {service_code} {requirement}
     const regex = /^#aiads\s+(0x[a-fA-F0-9]{40})\s+(S[1-3])\s+(.+?)(?:\s+#adtech\s+#promotion)?$/;
     const match = tweetData.trim().match(regex);
@@ -97,6 +112,14 @@ export class OPA {
       state: newState,
       timestamp: new Date()
     });
+
+    // Create and sign status update message
+    const message = new AgentMessage(
+      MessageTypes.STATUS_UPDATE,
+      orderId,
+      { status: newState }
+    );
+    signMessage('OPA', message);
 
     this.orders.set(orderId, order);
     return order;
