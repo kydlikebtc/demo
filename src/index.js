@@ -1,12 +1,12 @@
 import { OPA } from './services/opa.js';
 import { CPA } from './services/cpa.js';
 import { TwitterAPI } from './mocks/twitterMock.js';
-import { AdsPaymentContract } from './mocks/ethereumMock.js';
+import { EthereumPaymentProvider } from './mocks/ethereumPaymentProvider.js';
 import { TaapError } from './models/errors.js';
 
 // Initialize services
 const twitterAPI = new TwitterAPI();
-const paymentContract = new AdsPaymentContract();
+const paymentContract = new EthereumPaymentProvider();
 const opa = new OPA();
 const cpa = new CPA(opa); // Pass OPA instance for state management
 
