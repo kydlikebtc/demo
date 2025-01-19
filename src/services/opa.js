@@ -1,6 +1,9 @@
 import { OrderStates, isValidTransition } from '../models/orderState.js';
 import { TaapError } from '../models/errors.js';
 import { validateServiceCode, getServicePrice } from '../models/serviceTypes.js';
+import { RetryHandler, ProcessTimeouts } from '../utils/timeouts.js';
+import { AgentMessage, MessageTypes } from '../models/agentMessage.js';
+import { signMessage, rateLimiter } from '../utils/security.js';
 import { EthereumPaymentProvider } from '../mocks/ethereumPaymentProvider.js';
 import { SolanaPaymentProvider } from '../mocks/solanaPaymentProvider.js';
 
@@ -9,9 +12,23 @@ export class OPA {
     this.orders = new Map(); // In-memory store for orders
     this.ethereumProvider = new EthereumPaymentProvider();
     this.solanaProvider = new SolanaPaymentProvider();
+    this.messageQueue = new Map(); // Store signed messages
+  }
+
+  // Helper method to extract user address from tweet
+  _extractUserAddress(tweetData) {
+    const match = tweetData.match(/0x[a-fA-F0-9]{40}/);
+    return match ? match[0] : null;
   }
 
   parseOrderCommand(tweetData) {
+    // Check rate limit for the user's address
+    const userAddress = this._extractUserAddress(tweetData);
+    if (userAddress && rateLimiter.isRateLimited(userAddress)) {
+      throw new TaapError('E005', 'Rate limit exceeded for this address');
+    }
+    rateLimiter.addRequest(userAddress);
+
     // Parse tweet format: #aiads {contract_address} {service_code} {requirement} [#eth|#solana]
     const regex = /^#aiads\s+([A-Za-z0-9]{32,44})\s+(S[1-3])\s+(.+?)(?:\s+#adtech\s+#promotion)?(?:\s+#(eth|solana))?$/;
     const match = tweetData.trim().match(regex);
@@ -64,22 +81,29 @@ export class OPA {
       throw new TaapError('E001', `Order not found: ${orderId}`);
     }
 
+    const retryHandler = new RetryHandler('PAYMENT_VERIFICATION', ProcessTimeouts.PAYMENT_VERIFICATION.retries);
+    const provider = order.chain === 'solana' ? this.solanaProvider : this.ethereumProvider;
+
     try {
-      // Get appropriate provider based on chain
-      const provider = order.chain === 'solana' ? this.solanaProvider : this.ethereumProvider;
-      
-      // Verify payment using chain-specific provider
-      const verified = await provider.verifyPayment(
-        order.contractAddress,
-        order.serviceCode
-      );
-      
-      if (verified) {
+      const result = await retryHandler.execute(async () => {
+        if (retryHandler.hasTimedOut()) {
+          throw new TaapError('E002', 'Payment verification timed out');
+        }
+
+        // Verify payment using chain-specific provider
+        const verified = await provider.verifyPayment(
+          order.contractAddress,
+          order.serviceCode
+        );
+        
+        if (!verified) {
+          throw new TaapError('E002', 'Payment verification failed');
+        }
         await this.updateStatus(orderId, OrderStates.PAYMENT_VERIFIED);
         return true;
-      } else {
-        throw new TaapError('E002', 'Payment verification failed');
-      }
+      });
+
+      return result;
     } catch (error) {
       if (error instanceof TaapError) {
         throw error;
@@ -103,6 +127,14 @@ export class OPA {
       state: newState,
       timestamp: new Date()
     });
+
+    // Create and sign status update message
+    const message = new AgentMessage(
+      MessageTypes.STATUS_UPDATE,
+      orderId,
+      { status: newState }
+    );
+    signMessage('OPA', message);
 
     this.orders.set(orderId, order);
     return order;

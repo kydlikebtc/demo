@@ -6,10 +6,11 @@ export class TwitterAPI {
       remaining: 100,
       resetTime: Date.now() + 3600000 // 1 hour window
     };
+    this.userRateLimits = new Map(); // Track per-user rate limits
   }
 
-  async postTweet(content) {
-    // Check rate limits
+  async postTweet(content, userAddress) {
+    // Check global rate limits
     if (this.rateLimit.remaining <= 0) {
       if (Date.now() < this.rateLimit.resetTime) {
         throw new Error('Rate limit exceeded');
@@ -17,6 +18,25 @@ export class TwitterAPI {
       // Reset rate limit
       this.rateLimit.remaining = 100;
       this.rateLimit.resetTime = Date.now() + 3600000;
+    }
+
+    // Check user-specific rate limits
+    if (userAddress) {
+      const userLimit = this.userRateLimits.get(userAddress) || {
+        remaining: 10,
+        resetTime: Date.now() + 3600000
+      };
+
+      if (userLimit.remaining <= 0) {
+        if (Date.now() < userLimit.resetTime) {
+          throw new Error('User rate limit exceeded');
+        }
+        userLimit.remaining = 10;
+        userLimit.resetTime = Date.now() + 3600000;
+      }
+
+      userLimit.remaining--;
+      this.userRateLimits.set(userAddress, userLimit);
     }
 
     // Validate content

@@ -1,6 +1,11 @@
 import { OrderStates, isValidTransition } from '../models/orderState.js';
 import { TaapError } from '../models/errors.js';
 import { ServiceTypes } from '../models/serviceTypes.js';
+import { RetryHandler, ProcessTimeouts } from '../utils/timeouts.js';
+import { AnalyticsTracker } from '../models/analytics.js';
+import { AgentMessage, MessageTypes } from '../models/agentMessage.js';
+import { signMessage, verifyMessage } from '../utils/security.js';
+import { uploadContentToIPFS, getContentFromIPFS } from '../services/ipfsStorage.js';
 
 export class CPA {
   constructor() {
@@ -10,6 +15,38 @@ export class CPA {
   constructor(opa) {
     this.contentCache = new Map(); // Store generated content
     this.opa = opa; // Reference to OPA for state updates
+    this.analytics = new AnalyticsTracker(); // Analytics tracking
+    this.ipfsHashes = new Map(); // Store IPFS content hashes
+    this.stateProgress = new Map(); // Track progress within states
+  }
+
+  // Generate partial completion report
+  async generatePartialReport(orderId) {
+    const order = this.opa.getOrder(orderId);
+    const progress = this.stateProgress.get(orderId) || {};
+    const content = this.contentCache.get(orderId);
+    const ipfsHash = this.ipfsHashes.get(orderId);
+
+    return {
+      orderId,
+      currentState: order.state,
+      stateProgress: progress,
+      completedSteps: order.updates.map(u => u.state),
+      contentHash: ipfsHash,
+      partialContent: content,
+      timestamp: new Date(),
+      canResume: this._canResumeFromState(order.state)
+    };
+  }
+
+  // Check if order can be resumed from current state
+  _canResumeFromState(state) {
+    return [
+      OrderStates.CONTENT_GENERATION,
+      OrderStates.CONTENT_REVIEW,
+      OrderStates.PUBLISHING,
+      OrderStates.PARTIAL_COMPLETION
+    ].includes(state);
   }
 
   async generateContent(order) {
@@ -17,25 +54,51 @@ export class CPA {
       throw new TaapError('E001', 'Invalid order object');
     }
 
-    try {
-      // Update state to CONTENT_GENERATION
-      await this.opa.updateStatus(order.id, OrderStates.CONTENT_GENERATION);
+    // Verify the order message signature
+    const message = new AgentMessage(
+      MessageTypes.NEW_ORDER,
+      order.id,
+      { status: order.state }
+    );
+    if (!verifyMessage('OPA', message)) {
+      throw new TaapError('E001', 'Invalid order signature');
+    }
 
-      // Mock AI content generation based on service type
-      const content = await this._mockGenerateContent(order);
-      
-      // Validate content against requirements
-      this._validateContent(content);
-      
-      // Store generated content
-      this.contentCache.set(order.id, content);
-      
-      // Move to CONTENT_REVIEW state
-      await this.opa.updateStatus(order.id, OrderStates.CONTENT_REVIEW);
-      
-      return content;
+    // Initialize state progress
+    this.stateProgress.set(order.id, {
+      state: OrderStates.CONTENT_GENERATION,
+      progress: StateProgress.CONTENT_GENERATION.STARTED
+    });
+
+    const retryHandler = new RetryHandler('CONTENT_GENERATION', ProcessTimeouts.CONTENT_GENERATION.retries);
+
+    try {
+      const result = await retryHandler.execute(async () => {
+        if (retryHandler.hasTimedOut()) {
+          throw new TaapError('E003', 'Content generation timed out');
+        }
+
+        // Update state to CONTENT_GENERATION
+        await this.opa.updateStatus(order.id, OrderStates.CONTENT_GENERATION);
+
+        // Mock AI content generation based on service type
+        const content = await this._mockGenerateContent(order);
+        
+        // Validate content against requirements
+        this._validateContent(content);
+        
+        // Store generated content
+        this.contentCache.set(order.id, content);
+        
+        // Move to CONTENT_REVIEW state
+        await this.opa.updateStatus(order.id, OrderStates.CONTENT_REVIEW);
+        
+        return content;
+      });
+
+      return result;
     } catch (error) {
-      throw new TaapError('E003', error.message);
+      throw new TaapError('E003', `Content generation failed: ${error.message}`);
     }
   }
 
@@ -77,11 +140,23 @@ export class CPA {
     }
 
     try {
-      // Mock Twitter API publishing
-      await this._mockPublishToTwitter(content);
+      // Store content in IPFS
+      const contentHash = await uploadContentToIPFS(content);
+      this.ipfsHashes.set(order.id, contentHash);
       
-      // Move to COMPLETED state after successful publishing
-      await this.opa.updateStatus(order.id, OrderStates.COMPLETED);
+      // Mock Twitter API publishing
+      const publishResult = await this._mockPublishToTwitter(content);
+      
+      // Record analytics with IPFS hash
+      await this.analytics.recordPublish(order, publishResult.tweetId, contentHash);
+      
+      // For S2 and S3 services, check if all posts are published
+      if ((order.serviceCode === 'S2' || order.serviceCode === 'S3') && 
+          !this._allPostsPublished(order.id)) {
+        await this.opa.updateStatus(order.id, OrderStates.PARTIAL_COMPLETION);
+      } else {
+        await this.opa.updateStatus(order.id, OrderStates.COMPLETED);
+      }
       
       return true;
     } catch (error) {
@@ -189,7 +264,29 @@ export class CPA {
     // Simulate publishing time (< 30 minutes per SLA)
     await new Promise(resolve => setTimeout(resolve, 100));
 
+    // Update progress tracking
+    const orderId = content.orderId;
+    if (orderId) {
+      this.stateProgress.set(orderId, {
+        state: OrderStates.PUBLISHING,
+        progress: StateProgress.PUBLISHING.IN_PROGRESS,
+        publishedPosts: this._getPublishedPosts(orderId) + 1
+      });
+    }
+
     // Mock successful publishing
     return { success: true, tweetId: `mock_${Date.now()}` };
+  }
+
+  _getPublishedPosts(orderId) {
+    const progress = this.stateProgress.get(orderId);
+    return progress?.publishedPosts || 0;
+  }
+
+  _allPostsPublished(orderId) {
+    const order = this.opa.getOrder(orderId);
+    const requiredPosts = order.serviceCode === 'S2' ? 3 : 
+                         order.serviceCode === 'S3' ? 5 : 1;
+    return this._getPublishedPosts(orderId) >= requiredPosts;
   }
 }

@@ -65,5 +65,55 @@ describe('CPA Tests', () => {
       const updatedOrder = opa.getOrder(order.id);
       expect(updatedOrder.state).toBe(OrderStates.COMPLETED);
     });
+
+    it('handles partial completion for S2 service type', async () => {
+      const tweetS2 = '#aiads 0x742d35Cc6634C0532925a3b844Bc454e4438f44e S2 Test requirement #adtech #promotion';
+      const orderS2 = opa.parseOrderCommand(tweetS2);
+      
+      // Mock error during publishing
+      jest.spyOn(cpa, '_mockPublishToTwitter').mockImplementationOnce(() => {
+        throw new Error('Network error');
+      });
+
+      await cpa.generateContent(orderS2);
+      await cpa.reviewContent(orderS2);
+      
+      try {
+        await cpa.publishContent(orderS2);
+      } catch (error) {
+        const updatedOrder = opa.getOrder(orderS2.id);
+        expect(updatedOrder.state).toBe(OrderStates.PARTIAL_COMPLETION);
+        
+        const report = await cpa.generatePartialReport(orderS2.id);
+        expect(report.canResume).toBe(true);
+        expect(report.completedSteps).toContain(OrderStates.CONTENT_REVIEW);
+        expect(report.contentHash).toBeDefined();
+      }
+    });
+
+    it('stores content in IPFS before publishing', async () => {
+      await cpa.generateContent(order);
+      await cpa.reviewContent(order);
+      await cpa.publishContent(order);
+      
+      const contentHash = cpa.ipfsHashes.get(order.id);
+      expect(contentHash).toBeDefined();
+      expect(typeof contentHash).toBe('string');
+      expect(contentHash.length).toBe(46); // Standard IPFS CID length
+    });
+
+    it('includes IPFS hash in analytics', async () => {
+      const analyticsSpy = jest.spyOn(cpa.analytics, 'recordPublish');
+      
+      await cpa.generateContent(order);
+      await cpa.reviewContent(order);
+      await cpa.publishContent(order);
+      
+      expect(analyticsSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        expect.stringMatching(/^[A-Za-z0-9+/]{46}$/) // Base64 CID format
+      );
+    });
   });
 });
