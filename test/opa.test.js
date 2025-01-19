@@ -10,14 +10,35 @@ describe('OPA Tests', () => {
   });
 
   describe('parseOrderCommand', () => {
-    it('parses valid order tweets correctly', () => {
-      const tweet = '#aiads 0x742d35Cc6634C0532925a3b844Bc454e4438f44e S1 Create an engaging promotional tweet #adtech #promotion';
+    const validEthAddress = '0x742d35Cc6634C0532925a3b844Bc454e4438f44e';
+    const validSolAddress = '7RCz8wb6WXxUhAigZXF4kNxNgAKTi9sF5Z4FxXYq7czM';
+
+    it('parses valid Ethereum order tweets correctly', () => {
+      const tweet = `#aiads ${validEthAddress} S1 Create an engaging promotional tweet #adtech #promotion #eth`;
       const order = opa.parseOrderCommand(tweet);
       
       expect(order.serviceCode).toBe('S1');
-      expect(order.contractAddress).toBe('0x742d35Cc6634C0532925a3b844Bc454e4438f44e');
+      expect(order.contractAddress).toBe(validEthAddress);
       expect(order.requirement).toContain('Create an engaging promotional tweet');
       expect(order.state).toBe(OrderStates.RECEIVED);
+      expect(order.chain).toBe('eth');
+    });
+
+    it('parses valid Solana order tweets correctly', () => {
+      const tweet = `#aiads ${validSolAddress} S1 Create an engaging promotional tweet #adtech #promotion #solana`;
+      const order = opa.parseOrderCommand(tweet);
+      
+      expect(order.serviceCode).toBe('S1');
+      expect(order.contractAddress).toBe(validSolAddress);
+      expect(order.requirement).toContain('Create an engaging promotional tweet');
+      expect(order.state).toBe(OrderStates.RECEIVED);
+      expect(order.chain).toBe('solana');
+    });
+
+    it('defaults to Ethereum chain when no chain tag is provided', () => {
+      const tweet = `#aiads ${validEthAddress} S1 Create an engaging promotional tweet #adtech #promotion`;
+      const order = opa.parseOrderCommand(tweet);
+      expect(order.chain).toBe('eth');
     });
 
     it('throws E001 for invalid tweet format', () => {
@@ -31,6 +52,18 @@ describe('OPA Tests', () => {
       invalidTweets.forEach(tweet => {
         expect(() => opa.parseOrderCommand(tweet)).toThrow(TaapError);
       });
+    });
+
+    it('throws E001 for invalid chain-specific address formats', () => {
+      // Ethereum address for Solana chain
+      const invalidSolTweet = `#aiads ${validEthAddress} S1 requirement #adtech #promotion #solana`;
+      expect(() => opa.parseOrderCommand(invalidSolTweet))
+        .toThrow(new TaapError('E001', 'Invalid solana address format'));
+
+      // Solana address for Ethereum chain
+      const invalidEthTweet = `#aiads ${validSolAddress} S1 requirement #adtech #promotion #eth`;
+      expect(() => opa.parseOrderCommand(invalidEthTweet))
+        .toThrow(new TaapError('E001', 'Invalid eth address format'));
     });
   });
 

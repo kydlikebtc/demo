@@ -19,9 +19,10 @@ async function processOrder(tweetText) {
     order = opa.parseOrderCommand(tweetText);
     console.log('Order created:', order.id);
 
-    // Step 2: Verify payment
+    // Step 2: Verify payment using appropriate provider
     console.log('Verifying payment...');
-    const paymentVerified = await paymentContract.verifyPayment(
+    const provider = order.chain === 'solana' ? new SolanaPaymentProvider() : new EthereumPaymentProvider();
+    const paymentVerified = await provider.verifyPayment(
       order.contractAddress,
       order.serviceCode
     );
