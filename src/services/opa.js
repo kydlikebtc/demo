@@ -1,22 +1,32 @@
 import { OrderStates, isValidTransition } from '../models/orderState.js';
 import { TaapError } from '../models/errors.js';
 import { validateServiceCode, getServicePrice } from '../models/serviceTypes.js';
+import { EthereumPaymentProvider } from '../mocks/ethereumPaymentProvider.js';
+import { SolanaPaymentProvider } from '../mocks/solanaPaymentProvider.js';
 
 export class OPA {
   constructor() {
     this.orders = new Map(); // In-memory store for orders
+    this.ethereumProvider = new EthereumPaymentProvider();
+    this.solanaProvider = new SolanaPaymentProvider();
   }
 
   parseOrderCommand(tweetData) {
-    // Parse tweet format: #aiads {contract_address} {service_code} {requirement}
-    const regex = /^#aiads\s+(0x[a-fA-F0-9]{40})\s+(S[1-3])\s+(.+?)(?:\s+#adtech\s+#promotion)?$/;
+    // Parse tweet format: #aiads {contract_address} {service_code} {requirement} [#eth|#solana]
+    const regex = /^#aiads\s+([A-Za-z0-9]{32,44})\s+(S[1-3])\s+(.+?)(?:\s+#adtech\s+#promotion)?(?:\s+#(eth|solana))?$/;
     const match = tweetData.trim().match(regex);
 
     if (!match) {
       throw new TaapError('E001', 'Tweet format does not match required pattern');
     }
 
-    const [, contractAddress, serviceCode, requirement] = match;
+    const [, contractAddress, serviceCode, requirement, chain = 'eth'] = match;
+    
+    // Validate address format based on chain
+    const provider = chain === 'solana' ? this.solanaProvider : this.ethereumProvider;
+    if (!provider.validateAddress(contractAddress)) {
+      throw new TaapError('E001', `Invalid ${chain} address format`);
+    }
 
     // Validate service code
     if (!validateServiceCode(serviceCode)) {
@@ -34,6 +44,7 @@ export class OPA {
       contractAddress,
       serviceCode,
       requirement,
+      chain,
       state: OrderStates.RECEIVED,
       price: getServicePrice(serviceCode),
       createdAt: new Date(),
@@ -54,8 +65,14 @@ export class OPA {
     }
 
     try {
-      // Mock payment verification - in real implementation, this would call the smart contract
-      const verified = true; // Mocked to always succeed as per plan
+      // Get appropriate provider based on chain
+      const provider = order.chain === 'solana' ? this.solanaProvider : this.ethereumProvider;
+      
+      // Verify payment using chain-specific provider
+      const verified = await provider.verifyPayment(
+        order.contractAddress,
+        order.serviceCode
+      );
       
       if (verified) {
         await this.updateStatus(orderId, OrderStates.PAYMENT_VERIFIED);
@@ -67,7 +84,7 @@ export class OPA {
       if (error instanceof TaapError) {
         throw error;
       }
-      throw new TaapError('E002', 'Payment verification error');
+      throw new TaapError('E002', error.message || 'Payment verification error');
     }
   }
 

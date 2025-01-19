@@ -1,12 +1,10 @@
 import { OPA } from './services/opa.js';
 import { CPA } from './services/cpa.js';
 import { TwitterAPI } from './mocks/twitterMock.js';
-import { AdsPaymentContract } from './mocks/ethereumMock.js';
 import { TaapError } from './models/errors.js';
 
 // Initialize services
 const twitterAPI = new TwitterAPI();
-const paymentContract = new AdsPaymentContract();
 const opa = new OPA();
 const cpa = new CPA(opa); // Pass OPA instance for state management
 
@@ -19,12 +17,9 @@ async function processOrder(tweetText) {
     order = opa.parseOrderCommand(tweetText);
     console.log('Order created:', order.id);
 
-    // Step 2: Verify payment
+    // Step 2: Verify payment using chain-specific provider from OPA
     console.log('Verifying payment...');
-    const paymentVerified = await paymentContract.verifyPayment(
-      order.contractAddress,
-      order.serviceCode
-    );
+    const paymentVerified = await opa.verifyPayment(order.id);
 
     if (!paymentVerified) {
       throw new TaapError('E002', 'Payment verification failed');
@@ -63,9 +58,10 @@ async function processOrder(tweetText) {
       try {
         await opa.updateStatus(order.id, 'ERROR');
         
-        // Attempt refund if payment was made
+        // Attempt refund if payment was made using appropriate provider
         if (order.contractAddress) {
-          await paymentContract.refund(order.contractAddress, order.id);
+          const provider = order.chain === 'solana' ? opa.solanaProvider : opa.ethereumProvider;
+          await provider.refund(order.contractAddress, order.id);
           console.log('Payment refunded');
         }
       } catch (updateError) {
