@@ -1,6 +1,7 @@
 import { OrderStates, isValidTransition } from '../models/orderState.js';
 import { TaapError } from '../models/errors.js';
 import { validateServiceCode, getServicePrice } from '../models/serviceTypes.js';
+import { RetryHandler, ProcessTimeouts } from '../utils/timeouts.js';
 
 export class OPA {
   constructor() {
@@ -53,21 +54,31 @@ export class OPA {
       throw new TaapError('E001', `Order not found: ${orderId}`);
     }
 
+    const retryHandler = new RetryHandler('PAYMENT_VERIFICATION', ProcessTimeouts.PAYMENT_VERIFICATION.retries);
+
     try {
-      // Mock payment verification - in real implementation, this would call the smart contract
-      const verified = true; // Mocked to always succeed as per plan
-      
-      if (verified) {
+      const result = await retryHandler.execute(async () => {
+        if (retryHandler.hasTimedOut()) {
+          throw new TaapError('E002', 'Payment verification timed out');
+        }
+
+        // Mock payment verification - in real implementation, this would call the smart contract
+        const verified = true; // Mocked to always succeed as per plan
+        
+        if (!verified) {
+          throw new TaapError('E002', 'Payment verification failed');
+        }
+
         await this.updateStatus(orderId, OrderStates.PAYMENT_VERIFIED);
         return true;
-      } else {
-        throw new TaapError('E002', 'Payment verification failed');
-      }
+      });
+
+      return result;
     } catch (error) {
       if (error instanceof TaapError) {
         throw error;
       }
-      throw new TaapError('E002', 'Payment verification error');
+      throw new TaapError('E002', `Payment verification error: ${error.message}`);
     }
   }
 

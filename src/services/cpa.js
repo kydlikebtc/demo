@@ -1,6 +1,8 @@
 import { OrderStates, isValidTransition } from '../models/orderState.js';
 import { TaapError } from '../models/errors.js';
 import { ServiceTypes } from '../models/serviceTypes.js';
+import { RetryHandler, ProcessTimeouts } from '../utils/timeouts.js';
+import { AnalyticsTracker } from '../models/analytics.js';
 
 export class CPA {
   constructor() {
@@ -10,6 +12,7 @@ export class CPA {
   constructor(opa) {
     this.contentCache = new Map(); // Store generated content
     this.opa = opa; // Reference to OPA for state updates
+    this.analytics = new AnalyticsTracker(); // Analytics tracking
   }
 
   async generateContent(order) {
@@ -17,25 +20,35 @@ export class CPA {
       throw new TaapError('E001', 'Invalid order object');
     }
 
-    try {
-      // Update state to CONTENT_GENERATION
-      await this.opa.updateStatus(order.id, OrderStates.CONTENT_GENERATION);
+    const retryHandler = new RetryHandler('CONTENT_GENERATION', ProcessTimeouts.CONTENT_GENERATION.retries);
 
-      // Mock AI content generation based on service type
-      const content = await this._mockGenerateContent(order);
-      
-      // Validate content against requirements
-      this._validateContent(content);
-      
-      // Store generated content
-      this.contentCache.set(order.id, content);
-      
-      // Move to CONTENT_REVIEW state
-      await this.opa.updateStatus(order.id, OrderStates.CONTENT_REVIEW);
-      
-      return content;
+    try {
+      const result = await retryHandler.execute(async () => {
+        if (retryHandler.hasTimedOut()) {
+          throw new TaapError('E003', 'Content generation timed out');
+        }
+
+        // Update state to CONTENT_GENERATION
+        await this.opa.updateStatus(order.id, OrderStates.CONTENT_GENERATION);
+
+        // Mock AI content generation based on service type
+        const content = await this._mockGenerateContent(order);
+        
+        // Validate content against requirements
+        this._validateContent(content);
+        
+        // Store generated content
+        this.contentCache.set(order.id, content);
+        
+        // Move to CONTENT_REVIEW state
+        await this.opa.updateStatus(order.id, OrderStates.CONTENT_REVIEW);
+        
+        return content;
+      });
+
+      return result;
     } catch (error) {
-      throw new TaapError('E003', error.message);
+      throw new TaapError('E003', `Content generation failed: ${error.message}`);
     }
   }
 
@@ -78,7 +91,10 @@ export class CPA {
 
     try {
       // Mock Twitter API publishing
-      await this._mockPublishToTwitter(content);
+      const publishResult = await this._mockPublishToTwitter(content);
+      
+      // Record analytics
+      await this.analytics.recordPublish(order, publishResult.tweetId);
       
       // Move to COMPLETED state after successful publishing
       await this.opa.updateStatus(order.id, OrderStates.COMPLETED);
