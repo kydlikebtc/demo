@@ -1,0 +1,35 @@
+{
+  "name": "taap-protocol-demo",
+  "version": "1.0.0",
+  "description": "Implementation of TAAP (Dual-Agent Advertisement Protocol)",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "lint": "eslint ."
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "taap",
+    "protocol",
+    "advertisement",
+    "ai",
+    "agents"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "transform": "{}",
+    "testEnvironment": "node"
+  }
+}
