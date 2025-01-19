@@ -65,8 +65,14 @@ export class OPA {
     }
 
     try {
-      // Mock payment verification - in real implementation, this would call the smart contract
-      const verified = true; // Mocked to always succeed as per plan
+      // Get appropriate provider based on chain
+      const provider = order.chain === 'solana' ? this.solanaProvider : this.ethereumProvider;
+      
+      // Verify payment using chain-specific provider
+      const verified = await provider.verifyPayment(
+        order.contractAddress,
+        order.serviceCode
+      );
       
       if (verified) {
         await this.updateStatus(orderId, OrderStates.PAYMENT_VERIFIED);
@@ -78,7 +84,7 @@ export class OPA {
       if (error instanceof TaapError) {
         throw error;
       }
-      throw new TaapError('E002', 'Payment verification error');
+      throw new TaapError('E002', error.message || 'Payment verification error');
     }
   }
 
